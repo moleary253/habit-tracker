@@ -1,6 +1,27 @@
 use chrono::{Duration, Local, NaiveDate};
+use plotters::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+const DAY_OFFSET: Duration = Duration::hours(2);
+
+fn today() -> NaiveDate {
+    Local::now()
+        .checked_sub_signed(DAY_OFFSET)
+        .unwrap()
+        .date_naive()
+}
+
+fn days_within_last(duration: Duration) -> impl Iterator<Item = NaiveDate> {
+    Local::now()
+        .checked_sub_signed(DAY_OFFSET)
+        .unwrap()
+        .checked_sub_signed(duration)
+        .unwrap()
+        .date_naive()
+        .iter_days()
+        .take_while(|date| date <= &today())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Habit<'a> {
@@ -81,15 +102,7 @@ impl<'a> Habit<'a> {
     }
 
     pub fn add_progress(&mut self, progress: i32) {
-        let entry = self
-            .progress
-            .entry(
-                Local::now()
-                    .checked_sub_signed(Duration::hours(2))
-                    .unwrap()
-                    .date_naive(),
-            )
-            .or_insert(0);
+        let entry = self.progress.entry(today()).or_insert(0);
         *entry += progress;
     }
 
@@ -110,10 +123,7 @@ impl<'a> Habit<'a> {
                     i += 1;
                 }
                 let flag_to_set = 1 << i as i32;
-                if !((*self.progress.entry(Local::now().date_naive()).or_default() & flag_to_set
-                    != 0)
-                    ^ (finished))
-                {
+                if !((*self.progress.entry(today()).or_default() & flag_to_set != 0) ^ (finished)) {
                     return Err(format!(
                         "Objective '{}' already marked as {}.",
                         objective,
@@ -125,6 +135,79 @@ impl<'a> Habit<'a> {
                 Ok(())
             }
             _ => Err(format!("{} is not a checklist habit.", &self.name)),
+        }
+    }
+
+    pub fn plot<DB: DrawingBackend>(
+        &self,
+        drawing_area: &DrawingArea<DB, plotters::coord::Shift>,
+        in_last: Duration,
+    ) -> Result<(), Box<dyn std::error::Error + 'static>>
+    where
+        <DB as plotters::prelude::DrawingBackend>::ErrorType: 'static,
+    {
+        let days = Vec::from_iter(days_within_last(in_last));
+
+        let font = ("sans-serif", 40).into_font();
+
+        match &self.habit_type {
+            T::Checklist { objectives } => {
+                let mut chart = ChartBuilder::on(drawing_area)
+                    .x_label_area_size(70)
+                    .y_label_area_size(140)
+                    .caption("Num Goals Completed by Day", font)
+                    .build_cartesian_2d((1 - days.len() as i32)..0, 0..objectives.len())?;
+
+                chart
+                    .configure_mesh()
+                    .x_labels(days.len())
+                    .y_labels(objectives.len())
+                    .draw()?;
+
+                let mut completed = Vec::with_capacity(days.len());
+                for (i, day) in days.iter().enumerate() {
+                    completed.push(0);
+
+                    let mut prog = *self.progress.get(day).unwrap_or(&0);
+                    while prog > 0 {
+                        if prog & 1 == 1 {
+                            completed[i] += 1;
+                        }
+                        prog = prog >> 1;
+                    }
+                }
+
+                chart.draw_series(LineSeries::new(
+                    Vec::from_iter((1 - days.len() as i32..=0).zip(completed)),
+                    &RED,
+                ))?;
+                Ok(())
+            }
+            T::Numerical => {
+                let mut progress_during_period = Vec::<i32>::with_capacity(days.len());
+                for day in days.iter() {
+                    progress_during_period.push(*self.progress.get(day).unwrap_or(&0));
+                }
+                let max_progress = *progress_during_period.iter().max().unwrap();
+
+                let mut chart = ChartBuilder::on(drawing_area)
+                    .x_label_area_size(70)
+                    .y_label_area_size(140)
+                    .caption("Progress by Day", font)
+                    .build_cartesian_2d((1 - days.len() as i32)..0, 0..max_progress)?;
+
+                chart
+                    .configure_mesh()
+                    .x_labels(days.len())
+                    .y_labels(5)
+                    .draw()?;
+
+                chart.draw_series(LineSeries::new(
+                    Vec::from_iter((1 - days.len() as i32..=0).zip(progress_during_period)),
+                    &RED,
+                ))?;
+                Ok(())
+            }
         }
     }
 }

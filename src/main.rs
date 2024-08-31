@@ -1,4 +1,6 @@
+use chrono::Duration;
 use habit_tracker::{Habit, HabitType};
+use plotters::prelude::*;
 use std::env::args;
 use std::fs;
 use std::io::{Error, ErrorKind};
@@ -87,6 +89,18 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
             let objective = &args[3];
             mark_objective(&mut habits, &name, &objective, finishing)?;
         }
+        "p" | "plot" => {
+            if args.len() < 3 {
+                return io_error("Please enter the name of the habit you want to plot.");
+            }
+            let name = &args[2];
+            let duration = if args.len() < 4 {
+                Duration::days(7)
+            } else {
+                Duration::days(i64::from_str_radix(&args[3], 10)?)
+            };
+            plot(&habits, &name, duration)?;
+        }
         command => {
             help();
             return io_error(format!("Didn't understand command '{}.'", command).as_str());
@@ -120,6 +134,9 @@ Finishes an objective of a checklist habit.
 
     unf(inish) name objective:
 Unfinishes an objective of a checklist habit.
+
+    p(lot) name [days]:
+Plots the progress of the habit over the past [days] days. Days defaults to 7. Saves the graph at graphs/[name].png
 "
     )
 }
@@ -155,12 +172,35 @@ fn mark_objective<'a>(
     objective: &'a str,
     finished: bool,
 ) -> Result<(), Box<dyn std::error::Error + 'static>> {
-    let mut iter = habits.iter().enumerate().filter(|(_, h)| h.name() == name);
-    match iter.next() {
+    match habits.iter().position(|h| h.name() == name) {
         None => io_error(format!("Habit {} doesn't seem to exist.", name).as_str()),
-        Some((i, _)) => match habits[i].mark_objective(&objective, finished) {
+        Some(i) => match habits[i].mark_objective(&objective, finished) {
             Err(e) => io_error(&e),
             _ => Ok(()),
         },
+    }
+}
+
+fn plot<'a>(
+    habits: &Vec<Habit<'a>>,
+    name: &'a str,
+    duration: Duration,
+) -> Result<(), Box<dyn std::error::Error + 'static>> {
+    match habits.iter().position(|h| h.name() == name) {
+        None => io_error(format!("Habit {} doesn't seem to exist.", name).as_str()),
+        Some(i) => {
+            let file_name = format!("graphs/{}.png", name);
+            let backend = BitMapBackend::new(file_name.as_str(), (1600, 900));
+            let root = backend.into_drawing_area();
+            root.fill(&WHITE)?;
+
+            let root = root.margin(10, 10, 10, 10);
+
+            habits[i].plot(&root, duration)?;
+
+            root.present()?;
+
+            Ok(())
+        }
     }
 }
