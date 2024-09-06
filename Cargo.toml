@@ -1,6 +1,6 @@
 [package]
 name = "habit-tracker"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -9,4 +9,5 @@ edition = "2021"
 serde = { version="1.0", features=["derive"] }
 chrono = { version="0.4.38", features=["serde"] }
 serde_json = { version = "1.0" }
-plotters = "0.3.6"
+plotters = { version = "0.3.6" }
+plotters-backend = { version = "0.3.6" }

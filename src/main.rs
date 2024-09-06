@@ -1,4 +1,5 @@
 use chrono::Duration;
+use habit_tracker::console_backend::*;
 use habit_tracker::{Habit, HabitType};
 use plotters::prelude::*;
 use std::env::args;
@@ -89,7 +90,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
             let objective = &args[3];
             mark_objective(&mut habits, &name, &objective, finishing)?;
         }
-        "p" | "plot" => {
+        command @ ("p" | "plot" | "cp" | "cumplot") => {
+            let cumulative = match command {
+                "p" | "plot" => false,
+                "cp" | "cumplot" => true,
+                _ => panic!("Command didn't match second time when matched first time."),
+            };
             if args.len() < 3 {
                 return io_error("Please enter the name of the habit you want to plot.");
             }
@@ -99,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
             } else {
                 Duration::days(i64::from_str_radix(&args[3], 10)?)
             };
-            plot(&habits, &name, duration)?;
+            plot(&habits, &name, duration, cumulative)?;
         }
         command => {
             help();
@@ -136,7 +142,10 @@ Finishes an objective of a checklist habit.
 Unfinishes an objective of a checklist habit.
 
     p(lot) name [days]:
-Plots the progress of the habit over the past [days] days. Days defaults to 7. Saves the graph at graphs/[name].png
+Plots the progress of the habit over the past [days] days. Days defaults to 7. Plots to the console.
+
+    c(um)p(lot) name [days]:
+Plots the cumulative progress of the habit over the past [days] days. Days defaults to 7. Plots to the console.
 "
     )
 }
@@ -185,18 +194,14 @@ fn plot<'a>(
     habits: &Vec<Habit<'a>>,
     name: &'a str,
     duration: Duration,
+    cumulative: bool,
 ) -> Result<(), Box<dyn std::error::Error + 'static>> {
     match habits.iter().position(|h| h.name() == name) {
         None => io_error(format!("Habit {} doesn't seem to exist.", name).as_str()),
         Some(i) => {
-            let file_name = format!("graphs/{}.png", name);
-            let backend = BitMapBackend::new(file_name.as_str(), (1600, 900));
+            let backend = TextDrawingBackend::new(5001);
             let root = backend.into_drawing_area();
-            root.fill(&WHITE)?;
-
-            let root = root.margin(10, 10, 10, 10);
-
-            habits[i].plot(&root, duration)?;
+            habits[i].plot(&root, duration, cumulative)?;
 
             root.present()?;
 

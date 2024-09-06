@@ -3,6 +3,8 @@ use plotters::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod console_backend;
+
 const DAY_OFFSET: Duration = Duration::hours(2);
 
 fn today() -> NaiveDate {
@@ -93,8 +95,11 @@ impl<'a> Habit<'a> {
                 result
             }
             T::Numerical => {
-                for (date, prog) in &self.progress {
-                    result = result + format!("\n\t{}: {}", date, prog).as_str();
+                let mut dates = Vec::from_iter(self.progress.keys());
+                dates.sort();
+                for date in dates {
+                    result = result
+                        + format!("\n\t{}: {}", date, self.progress.get(date).unwrap()).as_str();
                 }
                 result
             }
@@ -138,32 +143,14 @@ impl<'a> Habit<'a> {
         }
     }
 
-    pub fn plot<DB: DrawingBackend>(
+    pub fn plotting_data(
         &self,
-        drawing_area: &DrawingArea<DB, plotters::coord::Shift>,
         in_last: Duration,
-    ) -> Result<(), Box<dyn std::error::Error + 'static>>
-    where
-        <DB as plotters::prelude::DrawingBackend>::ErrorType: 'static,
-    {
+    ) -> Result<Vec<(i32, i32)>, Box<dyn std::error::Error + 'static>> {
         let days = Vec::from_iter(days_within_last(in_last));
 
-        let font = ("sans-serif", 40).into_font();
-
         match &self.habit_type {
-            T::Checklist { objectives } => {
-                let mut chart = ChartBuilder::on(drawing_area)
-                    .x_label_area_size(70)
-                    .y_label_area_size(140)
-                    .caption("Num Goals Completed by Day", font)
-                    .build_cartesian_2d((1 - days.len() as i32)..0, 0..objectives.len())?;
-
-                chart
-                    .configure_mesh()
-                    .x_labels(days.len())
-                    .y_labels(objectives.len())
-                    .draw()?;
-
+            T::Checklist { .. } => {
                 let mut completed = Vec::with_capacity(days.len());
                 for (i, day) in days.iter().enumerate() {
                     completed.push(0);
@@ -176,38 +163,70 @@ impl<'a> Habit<'a> {
                         prog = prog >> 1;
                     }
                 }
-
-                chart.draw_series(LineSeries::new(
-                    Vec::from_iter((1 - days.len() as i32..=0).zip(completed)),
-                    &RED,
-                ))?;
-                Ok(())
+                Ok(Vec::from_iter((1 - days.len() as i32..=0).zip(completed)))
             }
             T::Numerical => {
                 let mut progress_during_period = Vec::<i32>::with_capacity(days.len());
                 for day in days.iter() {
                     progress_during_period.push(*self.progress.get(day).unwrap_or(&0));
                 }
-                let max_progress = *progress_during_period.iter().max().unwrap();
-
-                let mut chart = ChartBuilder::on(drawing_area)
-                    .x_label_area_size(70)
-                    .y_label_area_size(140)
-                    .caption("Progress by Day", font)
-                    .build_cartesian_2d((1 - days.len() as i32)..0, 0..max_progress)?;
-
-                chart
-                    .configure_mesh()
-                    .x_labels(days.len())
-                    .y_labels(5)
-                    .draw()?;
-
-                chart.draw_series(LineSeries::new(
-                    Vec::from_iter((1 - days.len() as i32..=0).zip(progress_during_period)),
-                    &RED,
-                ))?;
-                Ok(())
+                Ok(Vec::from_iter(
+                    (1 - days.len() as i32..=0).zip(progress_during_period),
+                ))
             }
         }
+    }
+
+    pub fn plot<DB: DrawingBackend>(
+        &self,
+        drawing_area: &DrawingArea<DB, plotters::coord::Shift>,
+        in_last: Duration,
+        cumulative: bool,
+    ) -> Result<(), Box<dyn std::error::Error + 'static>>
+    where
+        DB::ErrorType: 'static,
+    {
+        let font = ("sans-serif", (10).percent_height());
+
+        let data = self.plotting_data(in_last)?;
+        let data = if cumulative {
+            data.iter().fold(
+                Vec::with_capacity(data.len()),
+                |mut vec: Vec<(i32, i32)>, (d, p)| {
+                    vec.push(match &vec.len() {
+                        0 => (*d, *p),
+                        _ => (*d, *p + vec[vec.len() - 1].1),
+                    });
+                    vec
+                },
+            )
+        } else {
+            data
+        };
+
+        let title = match (&self.habit_type, cumulative) {
+            (T::Checklist { .. }, false) => "Num Goals Completed by day",
+            (T::Numerical, false) => "Progress by day",
+            (T::Checklist { .. }, true) => "Total Goals Completed by day",
+            (T::Numerical, true) => "Total Progress by day",
+        };
+
+        let mut chart = ChartBuilder::on(drawing_area)
+            .margin(1)
+            .set_label_area_size(LabelAreaPosition::Left, (5i32).percent_width())
+            .set_label_area_size(LabelAreaPosition::Bottom, (10i32).percent_height())
+            .caption(title, font)
+            .build_cartesian_2d(
+                (1 - data.len() as i32)..0,
+                0..*data.iter().map(|(_, y)| y).max().unwrap_or(&1),
+            )?;
+
+        chart.configure_mesh().disable_mesh().draw()?;
+
+        chart.draw_series(
+            data.iter()
+                .map(|(x, y)| Pixel::new((*x, *y), RGBColor(50, 100, 50))),
+        )?;
+        Ok(())
     }
 }
